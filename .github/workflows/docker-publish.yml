@@ -43,3 +43,50 @@ jobs:
           tags: |
             mcabri/cdy2204-exp1-s3:latest
             mcabri/cdy2204-exp1-s3:${{ github.sha }}
+
+  desplegar:
+    name: Desplegar en EC2
+    needs: publicar
+    runs-on: [self-hosted, Linux, X64, duoc-ec2]
+    timeout-minutes: 10
+
+    steps:
+      - name: Verificar EC2 y EFS
+        run: |
+          mountpoint -q /mnt/efs
+          sudo -n docker info > /dev/null
+          echo "EC2 Y EFS DISPONIBLES"
+
+      - name: Desplegar aplicacion Docker
+        run: |
+          set -euo pipefail
+
+          IMAGE="mcabri/cdy2204-exp1-s3:${GITHUB_SHA}"
+
+          sudo docker pull "$IMAGE"
+
+          sudo docker rm -f duoc-reservas || true
+
+          sudo docker run -d \
+            --name duoc-reservas \
+            --restart unless-stopped \
+            -p 8080:8080 \
+            -e TICKETS_DIR=/tickets \
+            -e S3_BUCKET=duoc-cdy2204-tickets-763911473229-20261104 \
+            -e AWS_REGION=us-east-1 \
+            -v /mnt/efs/tickets:/tickets \
+            -v /home/ec2-user/duoc-data:/app/data \
+            "$IMAGE"
+
+          echo "Verificando Spring Boot..."
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/api/eventos > /dev/null 2>&1; then
+              echo "DESPLIEGUE EC2 EXITOSO"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          sudo docker logs --tail 30 duoc-reservas
+          exit 1
